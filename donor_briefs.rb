@@ -17,13 +17,17 @@ ALIASES = {
   campaign: %w[campaign fund campaign_name appeal]
 }.freeze
 
-Options = Struct.new(:input, :lapsed_days, :top, :json_path, :as_of)
+Options = Struct.new(:input, :lapsed_days, :top, :json_path, :as_of, :recent_days, :major_threshold, :mid_threshold, :queue)
 
 options = Options.new
 options.lapsed_days = 365
 options.top = 5
 options.json_path = nil
 options.as_of = Date.today
+options.recent_days = 90
+options.major_threshold = 10_000
+options.mid_threshold = 1_000
+options.queue = 10
 
 parser = OptionParser.new do |opts|
   opts.banner = "Usage: donor_briefs.rb --input PATH [options]"
@@ -32,6 +36,10 @@ parser = OptionParser.new do |opts|
   opts.on("-t", "--top N", Integer, "Top donors to display (default 5)") { |v| options.top = v }
   opts.on("-j", "--json PATH", "Write JSON report to PATH") { |v| options.json_path = v }
   opts.on("-a", "--as-of DATE", "Use this date for lapsed/overdue checks (YYYY-MM-DD)") { |v| options.as_of = Date.parse(v) }
+  opts.on("--recent-days N", Integer, "Recent window in days for momentum metrics (default 90)") { |v| options.recent_days = v }
+  opts.on("--major-threshold N", Integer, "Major donor threshold (default 10000)") { |v| options.major_threshold = v }
+  opts.on("--mid-threshold N", Integer, "Mid-tier donor threshold (default 1000)") { |v| options.mid_threshold = v }
+  opts.on("--queue N", Integer, "Stewardship queue size (default 10)") { |v| options.queue = v }
   opts.on("-h", "--help", "Show help") do
     puts opts
     exit 0
@@ -162,7 +170,8 @@ rows.each_with_index do |row, index|
     first_gift_date: gift_date,
     last_gift_date: gift_date,
     pledge_total: 0.0,
-    pledge_due_dates: []
+    pledge_due_dates: [],
+    gift_dates: []
   }
 
   donor[:name] = donor_name if donor[:name].nil? || donor[:name].empty?
@@ -172,6 +181,7 @@ rows.each_with_index do |row, index|
   donor[:total_gifts] += 1
   donor[:first_gift_date] = gift_date if gift_date < donor[:first_gift_date]
   donor[:last_gift_date] = gift_date if gift_date > donor[:last_gift_date]
+  donor[:gift_dates] << gift_date
 
   pledge_amount = header_map[:pledge_amount] ? parse_amount(row[header_map[:pledge_amount]]) : nil
   pledge_due = header_map[:pledge_due] ? parse_date(row[header_map[:pledge_due]]) : nil
@@ -197,6 +207,8 @@ end
 
 as_of = options.as_of
 lapsed_cutoff = as_of - options.lapsed_days
+recent_cutoff = as_of - options.recent_days
+prior_cutoff = recent_cutoff - options.recent_days
 
 sorted_amounts = stats[:gift_amounts].sort
 median = if sorted_amounts.length.odd?
@@ -212,6 +224,25 @@ average_gift = stats[:total_raised] / stats[:total_gifts]
 sorted_donors = stats[:donors].values.sort_by { |donor| -donor[:total_amount] }
 
 lapsed_donors = stats[:donors].values.select { |donor| donor[:last_gift_date] < lapsed_cutoff }
+
+recent_total = 0.0
+prior_total = 0.0
+recent_gifts = 0
+prior_gifts = 0
+
+rows.each do |row|
+  gift_date = parse_date(row[header_map[:gift_date]])
+  gift_amount = parse_amount(row[header_map[:gift_amount]])
+  next if gift_date.nil? || gift_amount.nil? || gift_amount <= 0
+
+  if gift_date >= recent_cutoff
+    recent_total += gift_amount
+    recent_gifts += 1
+  elsif gift_date >= prior_cutoff
+    prior_total += gift_amount
+    prior_gifts += 1
+  end
+end
 
 campaigns_sorted = stats[:campaigns].map do |name, data|
   { name: name, total: data[:total], count: data[:count] }
@@ -232,6 +263,51 @@ overdue = open_pledges.select do |donor|
 
   donor[:pledge_due_dates].min < as_of
 end
+
+donor_tiers = {
+  major: { threshold: options.major_threshold, count: 0, total: 0.0 },
+  mid: { threshold: options.mid_threshold, count: 0, total: 0.0 },
+  small: { threshold: options.mid_threshold, count: 0, total: 0.0 }
+}
+
+new_donors = []
+reactivated_donors = []
+interval_days = []
+
+stats[:donors].values.each do |donor|
+  total = donor[:total_amount]
+  if total >= options.major_threshold
+    donor_tiers[:major][:count] += 1
+    donor_tiers[:major][:total] += total
+  elsif total >= options.mid_threshold
+    donor_tiers[:mid][:count] += 1
+    donor_tiers[:mid][:total] += total
+  else
+    donor_tiers[:small][:count] += 1
+    donor_tiers[:small][:total] += total
+  end
+
+  new_donors << donor if donor[:first_gift_date] >= recent_cutoff
+
+  dates = donor[:gift_dates].sort
+  if dates.length >= 2
+    dates.each_cons(2) { |a, b| interval_days << (b - a).to_i }
+    last_gap = (dates[-1] - dates[-2]).to_i
+    if donor[:last_gift_date] >= recent_cutoff && last_gap > options.lapsed_days
+      reactivated_donors << donor
+    end
+  end
+end
+
+avg_interval = interval_days.empty? ? nil : (interval_days.sum.to_f / interval_days.length)
+
+stewardship_queue = open_pledges.map do |donor|
+  priority = (donor[:open_amount] * 2.0) + donor[:total_amount]
+  if donor[:last_gift_date] < lapsed_cutoff
+    priority += donor[:total_amount]
+  end
+  donor.merge(priority_score: priority)
+end.sort_by { |donor| -donor[:priority_score] }
 
 puts "Group Scholar Donor Brief"
 puts "As of: #{as_of}"
@@ -283,6 +359,35 @@ overdue.first(10).each do |donor|
   label = "Unknown Donor" if label.empty?
   next_due = donor[:pledge_due_dates].min
   puts "  - #{label}: #{format_money(donor[:open_amount])} overdue since #{next_due}"
+end
+
+puts
+puts "Momentum (last #{options.recent_days} days)"
+puts "- Recent raised: #{format_money(recent_total)} (#{recent_gifts} gifts)"
+puts "- Prior window: #{format_money(prior_total)} (#{prior_gifts} gifts)"
+delta_total = recent_total - prior_total
+delta_gifts = recent_gifts - prior_gifts
+puts "- Delta raised: #{format_money(delta_total)}"
+puts "- Delta gifts: #{delta_gifts}"
+puts "- New donors: #{new_donors.length}"
+puts "- Reactivated donors: #{reactivated_donors.length}"
+puts "- Avg days between gifts: #{avg_interval ? avg_interval.round(1) : 'n/a'}"
+
+puts
+puts "Donor Tiers (lifetime)"
+puts "- Major (>= #{format_money(options.major_threshold)}): #{donor_tiers[:major][:count]} donors, #{format_money(donor_tiers[:major][:total])}"
+puts "- Mid (>= #{format_money(options.mid_threshold)}): #{donor_tiers[:mid][:count]} donors, #{format_money(donor_tiers[:mid][:total])}"
+puts "- Small (< #{format_money(options.mid_threshold)}): #{donor_tiers[:small][:count]} donors, #{format_money(donor_tiers[:small][:total])}"
+
+puts
+puts "Stewardship Queue"
+stewardship_queue.first(options.queue).each_with_index do |donor, idx|
+  label = donor[:name].to_s.strip
+  label = donor[:email].to_s.strip if label.empty?
+  label = donor[:id].to_s.strip if label.empty?
+  label = "Unknown Donor" if label.empty?
+  lapsed_flag = donor[:last_gift_date] < lapsed_cutoff ? "lapsed" : "active"
+  puts "#{idx + 1}. #{label} - open #{format_money(donor[:open_amount])}, total #{format_money(donor[:total_amount])}, last #{donor[:last_gift_date]} (#{lapsed_flag})"
 end
 
 if warnings.any?
@@ -347,6 +452,37 @@ report = {
       }
     end
   },
+  momentum: {
+    window_days: options.recent_days,
+    recent_total: recent_total,
+    recent_gifts: recent_gifts,
+    prior_total: prior_total,
+    prior_gifts: prior_gifts,
+    delta_total: delta_total,
+    delta_gifts: delta_gifts,
+    new_donors: new_donors.length,
+    reactivated_donors: reactivated_donors.length,
+    average_days_between_gifts: avg_interval
+  },
+  tiers: {
+    major_threshold: options.major_threshold,
+    mid_threshold: options.mid_threshold,
+    major: donor_tiers[:major],
+    mid: donor_tiers[:mid],
+    small: donor_tiers[:small]
+  },
+  stewardship_queue: stewardship_queue.first(options.queue).map do |donor|
+    {
+      id: donor[:id],
+      name: donor[:name],
+      email: donor[:email],
+      total_amount: donor[:total_amount],
+      last_gift_date: donor[:last_gift_date].to_s,
+      open_amount: donor[:open_amount],
+      priority_score: donor[:priority_score],
+      lapsed: donor[:last_gift_date] < lapsed_cutoff
+    }
+  end,
   warnings: warnings
 }
 

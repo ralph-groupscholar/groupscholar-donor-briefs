@@ -9,6 +9,9 @@ Group Scholar Donor Briefs is a Ruby CLI that turns a donation export into an ex
 - Flags lapsed donors based on configurable inactivity windows.
 - Breaks down campaign totals and gift counts.
 - Tracks pledged vs received amounts and highlights overdue pledges.
+- Adds momentum stats (recent vs prior window), new donors, and reactivated donors.
+- Groups donors into major/mid/small tiers with configurable thresholds.
+- Builds a stewardship queue prioritizing open pledges and lapsed value.
 - Emits a structured JSON report for sharing or automation.
 
 ## Requirements
@@ -28,11 +31,15 @@ ruby donor_briefs.rb --input data/sample_donations.csv
 - `--top N`: number of top donors to list (default 5)
 - `--json PATH`: write JSON report to a file
 - `--as-of YYYY-MM-DD`: evaluate lapsed/overdue logic as of this date
+- `--recent-days N`: recent window for momentum metrics (default 90)
+- `--major-threshold N`: major donor threshold (default 10000)
+- `--mid-threshold N`: mid-tier threshold (default 1000)
+- `--queue N`: stewardship queue size (default 10)
 
 Example with JSON output:
 
 ```bash
-ruby donor_briefs.rb --input data/sample_donations.csv --lapsed-days 540 --top 8 --json donor_brief.json
+ruby donor_briefs.rb --input data/sample_donations.csv --lapsed-days 540 --top 8 --recent-days 120 --major-threshold 15000 --json donor_brief.json
 ```
 
 ## CSV Headers
