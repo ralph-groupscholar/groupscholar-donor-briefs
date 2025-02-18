@@ -9,6 +9,7 @@ Group Scholar Donor Briefs is a Ruby CLI that turns a donation export into an ex
 - Flags lapsed donors based on configurable inactivity windows.
 - Breaks down campaign totals and gift counts.
 - Tracks pledged vs received amounts and highlights overdue pledges.
+- Flags unacknowledged gifts past a configurable acknowledgement grace window.
 - Adds momentum stats (recent vs prior window), new donors, and reactivated donors.
 - Groups donors into major/mid/small tiers with configurable thresholds.
 - Builds a stewardship queue prioritizing open pledges and lapsed value.
@@ -35,6 +36,7 @@ ruby donor_briefs.rb --input data/sample_donations.csv
 - `--major-threshold N`: major donor threshold (default 10000)
 - `--mid-threshold N`: mid-tier threshold (default 1000)
 - `--queue N`: stewardship queue size (default 10)
+- `--ack-days N`: days before unacknowledged gifts are flagged (default 7)
 
 Example with JSON output:
 
@@ -50,6 +52,7 @@ The CLI looks for these headers (case-insensitive). Alternate header names are s
 - `gift_date`, `gift_amount`
 - `pledge_amount`, `pledge_due`
 - `campaign`
+- `acknowledged` or `thank_you_sent_date`
 
 At minimum, the file must include `gift_date` and `gift_amount`.
 

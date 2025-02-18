@@ -1,11 +1,11 @@
-donor_id,donor_name,email,gift_date,gift_amount,pledge_amount,pledge_due,campaign
-D-001,Amaya Johnson,amaya@example.org,2023-02-10,2500,5000,2024-06-01,Future Scholars
-D-001,Amaya Johnson,amaya@example.org,2024-10-05,1000,,,
-D-002,Marco Ruiz,marco@example.org,2022-11-20,750,1500,2023-12-15,STEM Launch
-D-003,Sierra Patel,sierra@example.org,2025-01-15,1200,,,First Gen Fund
-D-004,Leo Grant,leo@example.org,2021-09-10,500,,,STEM Launch
-D-004,Leo Grant,leo@example.org,2023-12-02,900,2000,2024-03-01,STEM Launch
-D-005,Noah Kim,noah@example.org,2024-07-12,3500,3500,2024-12-31,Future Scholars
-D-006,Isla Chen,isla@example.org,2025-02-18,450,,,Bridge Awards
-D-007,Eli Walker,eli@example.org,2020-05-07,300,,,First Gen Fund
-D-008,Harper Stone,harper@example.org,2025-09-24,1800,,,Bridge Awards
+donor_id,donor_name,email,gift_date,gift_amount,pledge_amount,pledge_due,campaign,acknowledged
+D-001,Amaya Johnson,amaya@example.org,2023-02-10,2500,5000,2024-06-01,Future Scholars,yes
+D-001,Amaya Johnson,amaya@example.org,2024-10-05,1000,,,,no
+D-002,Marco Ruiz,marco@example.org,2022-11-20,750,1500,2023-12-15,STEM Launch,yes
+D-003,Sierra Patel,sierra@example.org,2025-01-15,1200,,,First Gen Fund,no
+D-004,Leo Grant,leo@example.org,2021-09-10,500,,,STEM Launch,yes
+D-004,Leo Grant,leo@example.org,2023-12-02,900,2000,2024-03-01,STEM Launch,yes
+D-005,Noah Kim,noah@example.org,2024-07-12,3500,3500,2024-12-31,Future Scholars,no
+D-006,Isla Chen,isla@example.org,2025-02-18,450,,,Bridge Awards,yes
+D-007,Eli Walker,eli@example.org,2020-05-07,300,,,First Gen Fund,yes
+D-008,Harper Stone,harper@example.org,2025-09-24,1800,,,Bridge Awards,no

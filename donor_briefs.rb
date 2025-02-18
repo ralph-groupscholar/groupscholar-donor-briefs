@@ -14,10 +14,12 @@ ALIASES = {
   gift_amount: %w[gift_amount amount donation_amount gift giftamount],
   pledge_amount: %w[pledge_amount pledge pledge_total pledged_amount],
   pledge_due: %w[pledge_due pledge_due_date due_date pledged_due],
-  campaign: %w[campaign fund campaign_name appeal]
+  campaign: %w[campaign fund campaign_name appeal],
+  ack_status: %w[acknowledged ack_status thank_you_sent thank_you_sent_flag thanked],
+  ack_date: %w[thank_you_sent_date thank_you_date acknowledgement_date acknowledged_date]
 }.freeze
 
-Options = Struct.new(:input, :lapsed_days, :top, :json_path, :as_of, :recent_days, :major_threshold, :mid_threshold, :queue)
+Options = Struct.new(:input, :lapsed_days, :top, :json_path, :as_of, :recent_days, :major_threshold, :mid_threshold, :queue, :ack_days)
 
 options = Options.new
 options.lapsed_days = 365
@@ -28,6 +30,7 @@ options.recent_days = 90
 options.major_threshold = 10_000
 options.mid_threshold = 1_000
 options.queue = 10
+options.ack_days = 7
 
 parser = OptionParser.new do |opts|
   opts.banner = "Usage: donor_briefs.rb --input PATH [options]"
@@ -40,6 +43,7 @@ parser = OptionParser.new do |opts|
   opts.on("--major-threshold N", Integer, "Major donor threshold (default 10000)") { |v| options.major_threshold = v }
   opts.on("--mid-threshold N", Integer, "Mid-tier donor threshold (default 1000)") { |v| options.mid_threshold = v }
   opts.on("--queue N", Integer, "Stewardship queue size (default 10)") { |v| options.queue = v }
+  opts.on("--ack-days N", Integer, "Days before unacknowledged gifts are flagged (default 7)") { |v| options.ack_days = v }
   opts.on("-h", "--help", "Show help") do
     puts opts
     exit 0
@@ -93,6 +97,17 @@ def format_money(value)
   format("$%.2f", value)
 end
 
+def parse_acknowledged(status_raw, date_raw)
+  return true if parse_date(date_raw)
+  return false if status_raw.nil?
+
+  value = status_raw.to_s.strip.downcase
+  return true if %w[yes y true 1 sent acknowledged].include?(value)
+  return false if %w[no n false 0 pending].include?(value)
+
+  false
+end
+
 rows = CSV.read(options.input, headers: true)
 
 if rows.headers.nil?
@@ -132,7 +147,8 @@ stats = {
   gift_amounts: [],
   total_gifts: 0,
   campaigns: Hash.new { |hash, key| hash[key] = { total: 0.0, count: 0 } },
-  donors: {}
+  donors: {},
+  gifts: []
 }
 
 rows.each_with_index do |row, index|
@@ -193,6 +209,20 @@ rows.each_with_index do |row, index|
   campaign = header_map[:campaign] ? row[header_map[:campaign]]&.strip : nil
   campaign = "Unspecified" if campaign.nil? || campaign.empty?
 
+  ack_status = header_map[:ack_status] ? row[header_map[:ack_status]] : nil
+  ack_date = header_map[:ack_date] ? row[header_map[:ack_date]] : nil
+  acknowledged = parse_acknowledged(ack_status, ack_date)
+
+  stats[:gifts] << {
+    donor_key: donor_key,
+    donor_id: donor_id,
+    donor_name: donor_name,
+    donor_email: email,
+    gift_date: gift_date,
+    gift_amount: gift_amount,
+    acknowledged: acknowledged
+  }
+
   stats[:total_raised] += gift_amount
   stats[:gift_amounts] << gift_amount
   stats[:total_gifts] += 1
@@ -209,6 +239,7 @@ as_of = options.as_of
 lapsed_cutoff = as_of - options.lapsed_days
 recent_cutoff = as_of - options.recent_days
 prior_cutoff = recent_cutoff - options.recent_days
+ack_cutoff = as_of - options.ack_days
 
 sorted_amounts = stats[:gift_amounts].sort
 median = if sorted_amounts.length.odd?
@@ -309,6 +340,27 @@ stewardship_queue = open_pledges.map do |donor|
   donor.merge(priority_score: priority)
 end.sort_by { |donor| -donor[:priority_score] }
 
+unacknowledged_gifts = stats[:gifts].select do |gift|
+  !gift[:acknowledged] && gift[:gift_date] <= ack_cutoff
+end
+
+unacknowledged_total = unacknowledged_gifts.sum { |gift| gift[:gift_amount] }
+unack_donors = Hash.new do |hash, key|
+  hash[key] = { id: nil, name: nil, email: nil, total: 0.0, count: 0, last_gift_date: nil }
+end
+
+unacknowledged_gifts.each do |gift|
+  entry = unack_donors[gift[:donor_key]]
+  entry[:id] ||= gift[:donor_id]
+  entry[:name] ||= gift[:donor_name]
+  entry[:email] ||= gift[:donor_email]
+  entry[:total] += gift[:gift_amount]
+  entry[:count] += 1
+  entry[:last_gift_date] = gift[:gift_date] if entry[:last_gift_date].nil? || gift[:gift_date] > entry[:last_gift_date]
+end
+
+unack_donors_sorted = unack_donors.values.sort_by { |entry| -entry[:total] }
+
 puts "Group Scholar Donor Brief"
 puts "As of: #{as_of}"
 puts "Input: #{options.input}"
@@ -359,6 +411,18 @@ overdue.first(10).each do |donor|
   label = "Unknown Donor" if label.empty?
   next_due = donor[:pledge_due_dates].min
   puts "  - #{label}: #{format_money(donor[:open_amount])} overdue since #{next_due}"
+end
+
+puts
+puts "Acknowledgement Backlog (older than #{ack_cutoff})"
+puts "- Unacknowledged gifts: #{unacknowledged_gifts.length}"
+puts "- Unacknowledged total: #{format_money(unacknowledged_total)}"
+unack_donors_sorted.first(10).each do |donor|
+  label = donor[:name].to_s.strip
+  label = donor[:email].to_s.strip if label.empty?
+  label = donor[:id].to_s.strip if label.empty?
+  label = "Unknown Donor" if label.empty?
+  puts "  - #{label}: #{format_money(donor[:total])} across #{donor[:count]} gifts, last gift #{donor[:last_gift_date]}"
 end
 
 puts
@@ -449,6 +513,22 @@ report = {
         email: donor[:email],
         open_amount: donor[:open_amount],
         next_due: donor[:pledge_due_dates].min.to_s
+      }
+    end
+  },
+  acknowledgements: {
+    grace_days: options.ack_days,
+    cutoff: ack_cutoff.to_s,
+    unacknowledged_gifts: unacknowledged_gifts.length,
+    unacknowledged_total: unacknowledged_total,
+    donors: unack_donors_sorted.map do |donor|
+      {
+        id: donor[:id],
+        name: donor[:name],
+        email: donor[:email],
+        total_amount: donor[:total],
+        gift_count: donor[:count],
+        last_gift_date: donor[:last_gift_date].to_s
       }
     end
   },
