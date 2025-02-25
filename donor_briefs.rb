@@ -97,6 +97,10 @@ def format_money(value)
   format("$%.2f", value)
 end
 
+def format_percent(value)
+  format("%.1f%%", value * 100.0)
+end
+
 def parse_acknowledged(status_raw, date_raw)
   return true if parse_date(date_raw)
   return false if status_raw.nil?
@@ -279,6 +283,14 @@ campaigns_sorted = stats[:campaigns].map do |name, data|
   { name: name, total: data[:total], count: data[:count] }
 end.sort_by { |item| -item[:total] }
 
+top5_total = sorted_donors.first(5).sum { |donor| donor[:total_amount] }
+top10_total = sorted_donors.first(10).sum { |donor| donor[:total_amount] }
+largest_donor_total = sorted_donors.first ? sorted_donors.first[:total_amount] : 0.0
+total_raised = stats[:total_raised]
+top5_share = total_raised.positive? ? top5_total / total_raised : 0.0
+top10_share = total_raised.positive? ? top10_total / total_raised : 0.0
+largest_donor_share = total_raised.positive? ? largest_donor_total / total_raised : 0.0
+
 pledge_total = stats[:donors].values.sum { |donor| donor[:pledge_total] }
 open_pledges = stats[:donors].values.map do |donor|
   open_amount = donor[:pledge_total] - donor[:total_amount]
@@ -374,6 +386,11 @@ puts "- Median gift: #{format_money(median)}"
 puts "- Largest gift: #{format_money(sorted_amounts.last)}"
 puts "- First gift: #{stats[:donors].values.map { |d| d[:first_gift_date] }.min}"
 puts "- Latest gift: #{stats[:donors].values.map { |d| d[:last_gift_date] }.max}"
+puts
+puts "Concentration"
+puts "- Top 5 donors share: #{format_percent(top5_share)} (#{format_money(top5_total)})"
+puts "- Top 10 donors share: #{format_percent(top10_share)} (#{format_money(top10_total)})"
+puts "- Largest donor share: #{format_percent(largest_donor_share)} (#{format_money(largest_donor_total)})"
 puts
 puts "Top Donors"
 sorted_donors.first(options.top).each_with_index do |donor, idx|
@@ -474,6 +491,14 @@ report = {
     largest_gift: sorted_amounts.last,
     first_gift: stats[:donors].values.map { |d| d[:first_gift_date] }.min.to_s,
     latest_gift: stats[:donors].values.map { |d| d[:last_gift_date] }.max.to_s
+  },
+  concentration: {
+    top5_total: top5_total,
+    top5_share: top5_share,
+    top10_total: top10_total,
+    top10_share: top10_share,
+    largest_donor_total: largest_donor_total,
+    largest_donor_share: largest_donor_share
   },
   top_donors: sorted_donors.first(options.top).map do |donor|
     {

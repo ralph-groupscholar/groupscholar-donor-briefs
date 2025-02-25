@@ -14,3 +14,8 @@
 - Added acknowledgement backlog tracking with a configurable grace window and donor-level rollups.
 - Updated the JSON report, CLI output, and sample data to include acknowledgement signals.
 - Documented the new acknowledgement options and headers in the README.
+
+## Iteration 51
+- Added donor concentration metrics (top 5/10 share and largest donor share) to the CLI output.
+- Extended JSON report with concentration totals and shares for downstream dashboards.
+- Documented the new concentration insight in the README.

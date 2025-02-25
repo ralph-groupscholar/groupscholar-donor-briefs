@@ -13,6 +13,7 @@ Group Scholar Donor Briefs is a Ruby CLI that turns a donation export into an ex
 - Adds momentum stats (recent vs prior window), new donors, and reactivated donors.
 - Groups donors into major/mid/small tiers with configurable thresholds.
 - Builds a stewardship queue prioritizing open pledges and lapsed value.
+- Adds donor concentration metrics (top 5/10 share and largest donor share).
 - Emits a structured JSON report for sharing or automation.
 
 ## Requirements
