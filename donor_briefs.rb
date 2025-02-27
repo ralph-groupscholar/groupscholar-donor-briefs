@@ -19,7 +19,7 @@ ALIASES = {
   ack_date: %w[thank_you_sent_date thank_you_date acknowledgement_date acknowledged_date]
 }.freeze
 
-Options = Struct.new(:input, :lapsed_days, :top, :json_path, :as_of, :recent_days, :major_threshold, :mid_threshold, :queue, :ack_days)
+Options = Struct.new(:input, :lapsed_days, :top, :json_path, :as_of, :recent_days, :major_threshold, :mid_threshold, :queue, :ack_days, :db_sync, :db_schema)
 
 options = Options.new
 options.lapsed_days = 365
@@ -31,6 +31,8 @@ options.major_threshold = 10_000
 options.mid_threshold = 1_000
 options.queue = 10
 options.ack_days = 7
+options.db_sync = false
+options.db_schema = 'donor_briefs'
 
 parser = OptionParser.new do |opts|
   opts.banner = "Usage: donor_briefs.rb --input PATH [options]"
@@ -44,10 +46,170 @@ parser = OptionParser.new do |opts|
   opts.on("--mid-threshold N", Integer, "Mid-tier donor threshold (default 1000)") { |v| options.mid_threshold = v }
   opts.on("--queue N", Integer, "Stewardship queue size (default 10)") { |v| options.queue = v }
   opts.on("--ack-days N", Integer, "Days before unacknowledged gifts are flagged (default 7)") { |v| options.ack_days = v }
+  opts.on("--db-sync", "Write report to Postgres (uses DONOR_BRIEFS_DB_* env vars)") { options.db_sync = true }
+  opts.on("--db-schema NAME", "Postgres schema for storage (default donor_briefs)") { |v| options.db_schema = v }
   opts.on("-h", "--help", "Show help") do
     puts opts
     exit 0
   end
+end
+
+def load_pg!
+  require 'pg'
+rescue LoadError
+  warn "Missing pg gem. Install with `gem install pg` to use --db-sync."
+  exit 1
+end
+
+def db_connection_params
+  url = ENV['DONOR_BRIEFS_DB_URL']
+  return url if url && !url.strip.empty?
+
+  host = ENV['DONOR_BRIEFS_DB_HOST'] || ENV['DB_HOST']
+  port = ENV['DONOR_BRIEFS_DB_PORT'] || ENV['DB_PORT']
+  dbname = ENV['DONOR_BRIEFS_DB_NAME'] || ENV['DB_NAME'] || 'postgres'
+  user = ENV['DONOR_BRIEFS_DB_USER'] || ENV['DB_USER']
+  password = ENV['DONOR_BRIEFS_DB_PASSWORD'] || ENV['DB_PASSWORD']
+
+  missing = []
+  missing << 'DONOR_BRIEFS_DB_HOST' if host.nil? || host.strip.empty?
+  missing << 'DONOR_BRIEFS_DB_USER' if user.nil? || user.strip.empty?
+  missing << 'DONOR_BRIEFS_DB_PASSWORD' if password.nil? || password.strip.empty?
+
+  unless missing.empty?
+    warn "Missing DB env vars: #{missing.join(', ')}"
+    exit 1
+  end
+
+  {
+    host: host,
+    port: port,
+    dbname: dbname,
+    user: user,
+    password: password
+  }
+end
+
+def ensure_db_schema(conn, schema)
+  schema_ident = PG::Connection.quote_ident(schema)
+
+  conn.exec("CREATE SCHEMA IF NOT EXISTS #{schema_ident}")
+  conn.exec(<<~SQL)
+    CREATE TABLE IF NOT EXISTS #{schema_ident}.brief_runs (
+      id bigserial primary key,
+      run_at timestamptz not null,
+      as_of date not null,
+      input_path text not null,
+      total_raised numeric not null,
+      total_gifts integer not null,
+      unique_donors integer not null,
+      average_gift numeric not null,
+      median_gift numeric not null,
+      largest_gift numeric not null,
+      top5_share numeric not null,
+      top10_share numeric not null,
+      largest_donor_share numeric not null,
+      recent_total numeric not null,
+      prior_total numeric not null,
+      delta_total numeric not null,
+      delta_gifts integer not null,
+      unacknowledged_total numeric not null,
+      unacknowledged_gifts integer not null,
+      open_pledges numeric not null,
+      overdue_pledges integer not null,
+      report jsonb not null
+    );
+  SQL
+  conn.exec(<<~SQL)
+    CREATE TABLE IF NOT EXISTS #{schema_ident}.top_donors (
+      id bigserial primary key,
+      run_id bigint references #{schema_ident}.brief_runs(id) on delete cascade,
+      donor_id text,
+      donor_name text,
+      donor_email text,
+      total_amount numeric not null,
+      total_gifts integer not null,
+      last_gift_date date
+    );
+  SQL
+end
+
+def persist_report(report, options, stats, top_donors, concentration, momentum, acknowledgements, pledges)
+  load_pg!
+  conn = PG.connect(db_connection_params)
+  ensure_db_schema(conn, options.db_schema)
+
+  schema_ident = PG::Connection.quote_ident(options.db_schema)
+  run_at = Time.now.utc
+
+  result = conn.exec_params(
+    <<~SQL,
+      INSERT INTO #{schema_ident}.brief_runs (
+        run_at, as_of, input_path,
+        total_raised, total_gifts, unique_donors, average_gift, median_gift, largest_gift,
+        top5_share, top10_share, largest_donor_share,
+        recent_total, prior_total, delta_total, delta_gifts,
+        unacknowledged_total, unacknowledged_gifts,
+        open_pledges, overdue_pledges,
+        report
+      ) VALUES (
+        $1, $2, $3,
+        $4, $5, $6, $7, $8, $9,
+        $10, $11, $12,
+        $13, $14, $15, $16,
+        $17, $18,
+        $19, $20,
+        $21
+      ) RETURNING id;
+    SQL
+    [
+      run_at,
+      report[:as_of],
+      options.input,
+      stats[:total_raised],
+      stats[:total_gifts],
+      report[:summary][:unique_donors],
+      report[:summary][:average_gift],
+      report[:summary][:median_gift],
+      report[:summary][:largest_gift],
+      concentration[:top5_share],
+      concentration[:top10_share],
+      concentration[:largest_donor_share],
+      momentum[:recent_total],
+      momentum[:prior_total],
+      momentum[:delta_total],
+      momentum[:delta_gifts],
+      acknowledgements[:unacknowledged_total],
+      acknowledgements[:unacknowledged_gifts],
+      pledges[:open_total],
+      pledges[:overdue_total],
+      JSON.dump(report)
+    ]
+  )
+
+  run_id = result[0]['id']
+
+  top_donors.each do |donor|
+    conn.exec_params(
+      <<~SQL,
+        INSERT INTO #{schema_ident}.top_donors (
+          run_id, donor_id, donor_name, donor_email,
+          total_amount, total_gifts, last_gift_date
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7);
+      SQL
+      [
+        run_id,
+        donor[:id],
+        donor[:name],
+        donor[:email],
+        donor[:total_amount],
+        donor[:total_gifts],
+        donor[:last_gift_date]
+      ]
+    )
+  end
+ensure
+  conn&.close
 end
 
 begin
@@ -593,4 +755,19 @@ report = {
 
 if options.json_path
   File.write(options.json_path, JSON.pretty_generate(report))
+end
+
+if options.db_sync
+  persist_report(
+    report,
+    options,
+    stats,
+    report[:top_donors],
+    report[:concentration],
+    report[:momentum],
+    report[:acknowledgements],
+    report[:pledges]
+  )
+  puts
+  puts "Report stored in Postgres schema #{options.db_schema}."
 end

@@ -19,3 +19,8 @@
 - Added donor concentration metrics (top 5/10 share and largest donor share) to the CLI output.
 - Extended JSON report with concentration totals and shares for downstream dashboards.
 - Documented the new concentration insight in the README.
+
+## Iteration 52
+- Added optional Postgres syncing for donor briefs with schema/table creation and top-donor inserts.
+- Documented database environment variables and usage in the README.
+- Seeded the production database with sample donor brief data.
