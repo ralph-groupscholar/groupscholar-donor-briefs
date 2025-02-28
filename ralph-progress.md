@@ -24,3 +24,13 @@
 - Added optional Postgres syncing for donor briefs with schema/table creation and top-donor inserts.
 - Documented database environment variables and usage in the README.
 - Seeded the production database with sample donor brief data.
+
+## Iteration 87
+- Added engagement metrics (one-time vs repeat donors, average gifts per donor) to CLI output and JSON.
+- Added recency buckets based on last gift date to highlight donor mix and value concentration.
+- Updated README feature list to cover the new engagement insights.
+
+## Iteration 88
+- Added a 12-month monthly trend rollup with gift totals and counts.
+- Printed the monthly trend in CLI output and included it in the JSON report.
+- Documented the monthly trend feature in the README.

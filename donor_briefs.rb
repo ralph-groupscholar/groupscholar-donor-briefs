@@ -535,6 +535,51 @@ end
 
 unack_donors_sorted = unack_donors.values.sort_by { |entry| -entry[:total] }
 
+one_time_donors = stats[:donors].values.select { |donor| donor[:total_gifts] == 1 }
+repeat_donors = stats[:donors].values.select { |donor| donor[:total_gifts] > 1 }
+avg_gifts_per_donor = stats[:total_gifts].to_f / unique_donors
+
+recency_buckets = [
+  { label: '0-30 days', min: 0, max: 30 },
+  { label: '31-90 days', min: 31, max: 90 },
+  { label: '91-180 days', min: 91, max: 180 },
+  { label: '181-365 days', min: 181, max: 365 },
+  { label: '366+ days', min: 366, max: nil }
+].map { |bucket| bucket.merge(count: 0, total: 0.0) }
+
+stats[:donors].values.each do |donor|
+  days_since = (as_of - donor[:last_gift_date]).to_i
+  bucket = recency_buckets.find do |entry|
+    if entry[:max]
+      days_since.between?(entry[:min], entry[:max])
+    else
+      days_since >= entry[:min]
+    end
+  end
+  next unless bucket
+
+  bucket[:count] += 1
+  bucket[:total] += donor[:total_amount]
+end
+
+monthly_totals = Hash.new { |hash, key| hash[key] = { total: 0.0, gifts: 0 } }
+stats[:gifts].each do |gift|
+  month_key = Date.new(gift[:gift_date].year, gift[:gift_date].month, 1)
+  monthly_totals[month_key][:total] += gift[:gift_amount]
+  monthly_totals[month_key][:gifts] += 1
+end
+
+as_of_month = Date.new(as_of.year, as_of.month, 1)
+last_12_months = (0..11).map { |offset| as_of_month << offset }.reverse
+monthly_trend = last_12_months.map do |month|
+  data = monthly_totals[month]
+  {
+    month: month.strftime('%Y-%m'),
+    total: data[:total],
+    gifts: data[:gifts]
+  }
+end
+
 puts "Group Scholar Donor Brief"
 puts "As of: #{as_of}"
 puts "Input: #{options.input}"
@@ -615,6 +660,26 @@ puts "- Delta gifts: #{delta_gifts}"
 puts "- New donors: #{new_donors.length}"
 puts "- Reactivated donors: #{reactivated_donors.length}"
 puts "- Avg days between gifts: #{avg_interval ? avg_interval.round(1) : 'n/a'}"
+
+puts
+puts "Engagement"
+puts "- One-time donors: #{one_time_donors.length} (#{format_percent(one_time_donors.length.to_f / unique_donors)})"
+puts "- Repeat donors: #{repeat_donors.length} (#{format_percent(repeat_donors.length.to_f / unique_donors)})"
+puts "- Avg gifts per donor: #{avg_gifts_per_donor.round(2)}"
+
+puts
+puts "Recency Buckets (by last gift)"
+recency_buckets.each do |bucket|
+  donor_share = unique_donors.positive? ? bucket[:count].to_f / unique_donors : 0.0
+  total_share = total_raised.positive? ? bucket[:total] / total_raised : 0.0
+  puts "- #{bucket[:label]}: #{bucket[:count]} donors, #{format_money(bucket[:total])} (#{format_percent(donor_share)} donors, #{format_percent(total_share)} total)"
+end
+
+puts
+puts "Monthly Trend (last 12 months)"
+monthly_trend.each do |entry|
+  puts "- #{entry[:month]}: #{format_money(entry[:total])} (#{entry[:gifts]} gifts)"
+end
 
 puts
 puts "Donor Tiers (lifetime)"
@@ -731,6 +796,25 @@ report = {
     reactivated_donors: reactivated_donors.length,
     average_days_between_gifts: avg_interval
   },
+  engagement: {
+    one_time_donors: one_time_donors.length,
+    repeat_donors: repeat_donors.length,
+    average_gifts_per_donor: avg_gifts_per_donor
+  },
+  recency_buckets: recency_buckets.map do |bucket|
+    donor_share = unique_donors.positive? ? bucket[:count].to_f / unique_donors : 0.0
+    total_share = total_raised.positive? ? bucket[:total] / total_raised : 0.0
+    {
+      label: bucket[:label],
+      min_days: bucket[:min],
+      max_days: bucket[:max],
+      donors: bucket[:count],
+      total_amount: bucket[:total],
+      donor_share: donor_share,
+      total_share: total_share
+    }
+  end,
+  monthly_trend: monthly_trend,
   tiers: {
     major_threshold: options.major_threshold,
     mid_threshold: options.mid_threshold,
