@@ -34,3 +34,8 @@
 - Added a 12-month monthly trend rollup with gift totals and counts.
 - Printed the monthly trend in CLI output and included it in the JSON report.
 - Documented the monthly trend feature in the README.
+
+## Iteration 96
+- Extended Postgres sync to store stewardship queue and recency bucket detail tables.
+- Added engagement metrics columns to brief_runs and backfilled with safe ALTERs.
+- Updated README with database table list and reseeded production data.

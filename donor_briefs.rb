@@ -117,9 +117,15 @@ def ensure_db_schema(conn, schema)
       unacknowledged_gifts integer not null,
       open_pledges numeric not null,
       overdue_pledges integer not null,
+      one_time_donors integer not null default 0,
+      repeat_donors integer not null default 0,
+      avg_gifts_per_donor numeric not null default 0,
       report jsonb not null
     );
   SQL
+  conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS one_time_donors integer not null default 0;")
+  conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS repeat_donors integer not null default 0;")
+  conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS avg_gifts_per_donor numeric not null default 0;")
   conn.exec(<<~SQL)
     CREATE TABLE IF NOT EXISTS #{schema_ident}.top_donors (
       id bigserial primary key,
@@ -130,6 +136,33 @@ def ensure_db_schema(conn, schema)
       total_amount numeric not null,
       total_gifts integer not null,
       last_gift_date date
+    );
+  SQL
+  conn.exec(<<~SQL)
+    CREATE TABLE IF NOT EXISTS #{schema_ident}.stewardship_queue (
+      id bigserial primary key,
+      run_id bigint references #{schema_ident}.brief_runs(id) on delete cascade,
+      donor_id text,
+      donor_name text,
+      donor_email text,
+      total_amount numeric not null,
+      open_amount numeric not null,
+      last_gift_date date,
+      priority_score numeric not null,
+      lapsed boolean not null
+    );
+  SQL
+  conn.exec(<<~SQL)
+    CREATE TABLE IF NOT EXISTS #{schema_ident}.recency_buckets (
+      id bigserial primary key,
+      run_id bigint references #{schema_ident}.brief_runs(id) on delete cascade,
+      label text not null,
+      min_days integer not null,
+      max_days integer,
+      donors integer not null,
+      total_amount numeric not null,
+      donor_share numeric not null,
+      total_share numeric not null
     );
   SQL
 end
@@ -151,6 +184,7 @@ def persist_report(report, options, stats, top_donors, concentration, momentum, 
         recent_total, prior_total, delta_total, delta_gifts,
         unacknowledged_total, unacknowledged_gifts,
         open_pledges, overdue_pledges,
+        one_time_donors, repeat_donors, avg_gifts_per_donor,
         report
       ) VALUES (
         $1, $2, $3,
@@ -159,7 +193,8 @@ def persist_report(report, options, stats, top_donors, concentration, momentum, 
         $13, $14, $15, $16,
         $17, $18,
         $19, $20,
-        $21
+        $21, $22, $23,
+        $24
       ) RETURNING id;
     SQL
     [
@@ -183,6 +218,9 @@ def persist_report(report, options, stats, top_donors, concentration, momentum, 
       acknowledgements[:unacknowledged_gifts],
       pledges[:open_total],
       pledges[:overdue_total],
+      report[:engagement][:one_time_donors],
+      report[:engagement][:repeat_donors],
+      report[:engagement][:average_gifts_per_donor],
       JSON.dump(report)
     ]
   )
@@ -205,6 +243,48 @@ def persist_report(report, options, stats, top_donors, concentration, momentum, 
         donor[:total_amount],
         donor[:total_gifts],
         donor[:last_gift_date]
+      ]
+    )
+  end
+
+  report[:stewardship_queue].each do |donor|
+    conn.exec_params(
+      <<~SQL,
+        INSERT INTO #{schema_ident}.stewardship_queue (
+          run_id, donor_id, donor_name, donor_email,
+          total_amount, open_amount, last_gift_date, priority_score, lapsed
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+      SQL
+      [
+        run_id,
+        donor[:id],
+        donor[:name],
+        donor[:email],
+        donor[:total_amount],
+        donor[:open_amount],
+        donor[:last_gift_date],
+        donor[:priority_score],
+        donor[:lapsed]
+      ]
+    )
+  end
+
+  report[:recency_buckets].each do |bucket|
+    conn.exec_params(
+      <<~SQL,
+        INSERT INTO #{schema_ident}.recency_buckets (
+          run_id, label, min_days, max_days, donors, total_amount, donor_share, total_share
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+      SQL
+      [
+        run_id,
+        bucket[:label],
+        bucket[:min_days],
+        bucket[:max_days],
+        bucket[:donors],
+        bucket[:total_amount],
+        bucket[:donor_share],
+        bucket[:total_share]
       ]
     )
   end
@@ -376,8 +456,9 @@ rows.each_with_index do |row, index|
   campaign = "Unspecified" if campaign.nil? || campaign.empty?
 
   ack_status = header_map[:ack_status] ? row[header_map[:ack_status]] : nil
-  ack_date = header_map[:ack_date] ? row[header_map[:ack_date]] : nil
-  acknowledged = parse_acknowledged(ack_status, ack_date)
+  ack_date_raw = header_map[:ack_date] ? row[header_map[:ack_date]] : nil
+  ack_date = parse_date(ack_date_raw)
+  acknowledged = parse_acknowledged(ack_status, ack_date_raw)
 
   stats[:gifts] << {
     donor_key: donor_key,
@@ -386,7 +467,8 @@ rows.each_with_index do |row, index|
     donor_email: email,
     gift_date: gift_date,
     gift_amount: gift_amount,
-    acknowledged: acknowledged
+    acknowledged: acknowledged,
+    ack_date: ack_date
   }
 
   stats[:total_raised] += gift_amount
@@ -535,6 +617,35 @@ end
 
 unack_donors_sorted = unack_donors.values.sort_by { |entry| -entry[:total] }
 
+acknowledged_gifts = stats[:gifts].select { |gift| gift[:acknowledged] }
+acknowledged_total = acknowledged_gifts.sum { |gift| gift[:gift_amount] }
+acknowledged_rate = stats[:total_gifts].positive? ? acknowledged_gifts.length.to_f / stats[:total_gifts] : 0.0
+
+ack_latency_days = acknowledged_gifts.filter_map do |gift|
+  next nil unless gift[:ack_date]
+  days = (gift[:ack_date] - gift[:gift_date]).to_i
+  next nil if days.negative?
+  days
+end
+
+ack_latency_days_sorted = ack_latency_days.sort
+ack_latency_avg = ack_latency_days.empty? ? nil : (ack_latency_days.sum.to_f / ack_latency_days.length)
+ack_latency_median = if ack_latency_days_sorted.empty?
+  nil
+elsif ack_latency_days_sorted.length.odd?
+  ack_latency_days_sorted[ack_latency_days_sorted.length / 2]
+else
+  mid = ack_latency_days_sorted.length / 2
+  (ack_latency_days_sorted[mid - 1] + ack_latency_days_sorted[mid]) / 2.0
+end
+
+on_time_ack = stats[:gifts].select do |gift|
+  next false unless gift[:ack_date]
+  (gift[:ack_date] - gift[:gift_date]).to_i <= options.ack_days
+end
+
+on_time_rate = stats[:total_gifts].positive? ? on_time_ack.length.to_f / stats[:total_gifts] : 0.0
+
 one_time_donors = stats[:donors].values.select { |donor| donor[:total_gifts] == 1 }
 repeat_donors = stats[:donors].values.select { |donor| donor[:total_gifts] > 1 }
 avg_gifts_per_donor = stats[:total_gifts].to_f / unique_donors
@@ -648,6 +759,15 @@ unack_donors_sorted.first(10).each do |donor|
   label = "Unknown Donor" if label.empty?
   puts "  - #{label}: #{format_money(donor[:total])} across #{donor[:count]} gifts, last gift #{donor[:last_gift_date]}"
 end
+
+puts
+puts "Acknowledgement Performance"
+puts "- Acknowledged gifts: #{acknowledged_gifts.length} (#{format_percent(acknowledged_rate)})"
+puts "- Acknowledged total: #{format_money(acknowledged_total)}"
+latency_label = ack_latency_avg ? "#{ack_latency_avg.round(1)} days" : "n/a"
+latency_median_label = ack_latency_median ? "#{ack_latency_median.round(1)} days" : "n/a"
+puts "- Avg days to acknowledge: #{latency_label} (median #{latency_median_label})"
+puts "- On-time acknowledgements (<= #{options.ack_days} days): #{on_time_ack.length} (#{format_percent(on_time_rate)})"
 
 puts
 puts "Momentum (last #{options.recent_days} days)"
@@ -771,6 +891,13 @@ report = {
   acknowledgements: {
     grace_days: options.ack_days,
     cutoff: ack_cutoff.to_s,
+    acknowledged_gifts: acknowledged_gifts.length,
+    acknowledged_total: acknowledged_total,
+    acknowledged_rate: acknowledged_rate,
+    average_days_to_acknowledge: ack_latency_avg,
+    median_days_to_acknowledge: ack_latency_median,
+    on_time_gifts: on_time_ack.length,
+    on_time_rate: on_time_rate,
     unacknowledged_gifts: unacknowledged_gifts.length,
     unacknowledged_total: unacknowledged_total,
     donors: unack_donors_sorted.map do |donor|

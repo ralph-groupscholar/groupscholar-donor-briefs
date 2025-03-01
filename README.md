@@ -18,6 +18,7 @@ Group Scholar Donor Briefs is a Ruby CLI that turns a donation export into an ex
 - Builds a stewardship queue prioritizing open pledges and lapsed value.
 - Adds donor concentration metrics (top 5/10 share and largest donor share).
 - Emits a structured JSON report for sharing or automation.
+- Optionally syncs briefs to Postgres, including stewardship queue and recency buckets.
 
 ## Requirements
 
@@ -66,6 +67,13 @@ ruby donor_briefs.rb --input data/sample_donations.csv --db-sync
 - `DONOR_BRIEFS_DB_USER`
 - `DONOR_BRIEFS_DB_PASSWORD`
 - `DONOR_BRIEFS_DB_URL` (optional full connection string)
+
+Database tables created:
+
+- `brief_runs` (summary metrics + JSON payload)
+- `top_donors`
+- `stewardship_queue`
+- `recency_buckets`
 
 ## CSV Headers
 
