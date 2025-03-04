@@ -30,10 +30,20 @@
 - Added recency buckets based on last gift date to highlight donor mix and value concentration.
 - Updated README feature list to cover the new engagement insights.
 
+## Iteration 78
+- Added acknowledgement performance metrics (acknowledged rate, latency, on-time acknowledgements) to CLI output and JSON.
+- Extended sample data with thank-you sent dates to drive acknowledgement timing insights.
+- Updated README to document the new acknowledgement performance coverage.
+
 ## Iteration 88
 - Added a 12-month monthly trend rollup with gift totals and counts.
 - Printed the monthly trend in CLI output and included it in the JSON report.
 - Documented the monthly trend feature in the README.
+
+## Iteration 89
+- Added Postgres storage for monthly trend rows alongside each brief run.
+- Updated database schema creation to include a monthly_trend table.
+- Documented the new database table in the README.
 
 ## Iteration 96
 - Extended Postgres sync to store stewardship queue and recency bucket detail tables.

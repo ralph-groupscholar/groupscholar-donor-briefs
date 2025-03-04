@@ -165,9 +165,18 @@ def ensure_db_schema(conn, schema)
       total_share numeric not null
     );
   SQL
+  conn.exec(<<~SQL)
+    CREATE TABLE IF NOT EXISTS #{schema_ident}.monthly_trend (
+      id bigserial primary key,
+      run_id bigint references #{schema_ident}.brief_runs(id) on delete cascade,
+      month date not null,
+      total_amount numeric not null,
+      gifts integer not null
+    );
+  SQL
 end
 
-def persist_report(report, options, stats, top_donors, concentration, momentum, acknowledgements, pledges)
+def persist_report(report, options, stats, top_donors, concentration, momentum, acknowledgements, pledges, monthly_trend)
   load_pg!
   conn = PG.connect(db_connection_params)
   ensure_db_schema(conn, options.db_schema)
@@ -285,6 +294,22 @@ def persist_report(report, options, stats, top_donors, concentration, momentum, 
         bucket[:total_amount],
         bucket[:donor_share],
         bucket[:total_share]
+      ]
+    )
+  end
+
+  monthly_trend.each do |entry|
+    conn.exec_params(
+      <<~SQL,
+        INSERT INTO #{schema_ident}.monthly_trend (
+          run_id, month, total_amount, gifts
+        ) VALUES ($1, $2, $3, $4);
+      SQL
+      [
+        run_id,
+        Date.parse("#{entry[:month]}-01"),
+        entry[:total],
+        entry[:gifts]
       ]
     )
   end
@@ -621,12 +646,12 @@ acknowledged_gifts = stats[:gifts].select { |gift| gift[:acknowledged] }
 acknowledged_total = acknowledged_gifts.sum { |gift| gift[:gift_amount] }
 acknowledged_rate = stats[:total_gifts].positive? ? acknowledged_gifts.length.to_f / stats[:total_gifts] : 0.0
 
-ack_latency_days = acknowledged_gifts.filter_map do |gift|
+ack_latency_days = acknowledged_gifts.map do |gift|
   next nil unless gift[:ack_date]
   days = (gift[:ack_date] - gift[:gift_date]).to_i
   next nil if days.negative?
   days
-end
+end.compact
 
 ack_latency_days_sorted = ack_latency_days.sort
 ack_latency_avg = ack_latency_days.empty? ? nil : (ack_latency_days.sum.to_f / ack_latency_days.length)
@@ -977,7 +1002,8 @@ if options.db_sync
     report[:concentration],
     report[:momentum],
     report[:acknowledgements],
-    report[:pledges]
+    report[:pledges],
+    report[:monthly_trend]
   )
   puts
   puts "Report stored in Postgres schema #{options.db_schema}."
