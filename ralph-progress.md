@@ -44,6 +44,7 @@
 - Added Postgres storage for monthly trend rows alongside each brief run.
 - Updated database schema creation to include a monthly_trend table.
 - Documented the new database table in the README.
+- Added acknowledgement performance columns to Postgres brief_runs storage for BI queries.
 
 ## Iteration 96
 - Extended Postgres sync to store stewardship queue and recency bucket detail tables.

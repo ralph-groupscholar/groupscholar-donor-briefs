@@ -113,6 +113,13 @@ def ensure_db_schema(conn, schema)
       prior_total numeric not null,
       delta_total numeric not null,
       delta_gifts integer not null,
+      acknowledged_gifts integer not null default 0,
+      acknowledged_total numeric not null default 0,
+      acknowledged_rate numeric not null default 0,
+      ack_latency_avg numeric,
+      ack_latency_median numeric,
+      on_time_gifts integer not null default 0,
+      on_time_rate numeric not null default 0,
       unacknowledged_total numeric not null,
       unacknowledged_gifts integer not null,
       open_pledges numeric not null,
@@ -126,6 +133,13 @@ def ensure_db_schema(conn, schema)
   conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS one_time_donors integer not null default 0;")
   conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS repeat_donors integer not null default 0;")
   conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS avg_gifts_per_donor numeric not null default 0;")
+  conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS acknowledged_gifts integer not null default 0;")
+  conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS acknowledged_total numeric not null default 0;")
+  conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS acknowledged_rate numeric not null default 0;")
+  conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS ack_latency_avg numeric;")
+  conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS ack_latency_median numeric;")
+  conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS on_time_gifts integer not null default 0;")
+  conn.exec("ALTER TABLE #{schema_ident}.brief_runs ADD COLUMN IF NOT EXISTS on_time_rate numeric not null default 0;")
   conn.exec(<<~SQL)
     CREATE TABLE IF NOT EXISTS #{schema_ident}.top_donors (
       id bigserial primary key,
@@ -191,6 +205,9 @@ def persist_report(report, options, stats, top_donors, concentration, momentum, 
         total_raised, total_gifts, unique_donors, average_gift, median_gift, largest_gift,
         top5_share, top10_share, largest_donor_share,
         recent_total, prior_total, delta_total, delta_gifts,
+        acknowledged_gifts, acknowledged_total, acknowledged_rate,
+        ack_latency_avg, ack_latency_median,
+        on_time_gifts, on_time_rate,
         unacknowledged_total, unacknowledged_gifts,
         open_pledges, overdue_pledges,
         one_time_donors, repeat_donors, avg_gifts_per_donor,
@@ -200,10 +217,13 @@ def persist_report(report, options, stats, top_donors, concentration, momentum, 
         $4, $5, $6, $7, $8, $9,
         $10, $11, $12,
         $13, $14, $15, $16,
-        $17, $18,
-        $19, $20,
-        $21, $22, $23,
-        $24
+        $17, $18, $19,
+        $20, $21,
+        $22, $23,
+        $24, $25,
+        $26, $27,
+        $28, $29, $30,
+        $31
       ) RETURNING id;
     SQL
     [
@@ -223,6 +243,13 @@ def persist_report(report, options, stats, top_donors, concentration, momentum, 
       momentum[:prior_total],
       momentum[:delta_total],
       momentum[:delta_gifts],
+      acknowledgements[:acknowledged_gifts],
+      acknowledgements[:acknowledged_total],
+      acknowledgements[:acknowledged_rate],
+      acknowledgements[:average_days_to_acknowledge],
+      acknowledgements[:median_days_to_acknowledge],
+      acknowledgements[:on_time_gifts],
+      acknowledgements[:on_time_rate],
       acknowledgements[:unacknowledged_total],
       acknowledgements[:unacknowledged_gifts],
       pledges[:open_total],

@@ -9,7 +9,7 @@ Group Scholar Donor Briefs is a Ruby CLI that turns a donation export into an ex
 - Flags lapsed donors based on configurable inactivity windows.
 - Breaks down campaign totals and gift counts.
 - Tracks pledged vs received amounts and highlights overdue pledges.
-- Flags unacknowledged gifts past a configurable acknowledgement grace window.
+- Flags unacknowledged gifts past a configurable acknowledgement grace window and reports acknowledgement performance.
 - Adds acknowledgement performance metrics (acknowledged rate and average days to acknowledge).
 - Adds momentum stats (recent vs prior window), new donors, and reactivated donors.
 - Adds engagement stats (one-time vs repeat donors and average gifts per donor).
@@ -19,7 +19,7 @@ Group Scholar Donor Briefs is a Ruby CLI that turns a donation export into an ex
 - Builds a stewardship queue prioritizing open pledges and lapsed value.
 - Adds donor concentration metrics (top 5/10 share and largest donor share).
 - Emits a structured JSON report for sharing or automation.
-- Optionally syncs briefs to Postgres, including stewardship queue, recency buckets, and monthly trend.
+- Optionally syncs briefs to Postgres, including acknowledgement performance metrics, stewardship queue, recency buckets, and monthly trend.
 
 ## Requirements
 
