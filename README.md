@@ -13,6 +13,7 @@ Group Scholar Donor Briefs is a Ruby CLI that turns a donation export into an ex
 - Adds acknowledgement performance metrics (acknowledged rate and average days to acknowledge).
 - Adds momentum stats (recent vs prior window), new donors, and reactivated donors.
 - Adds engagement stats (one-time vs repeat donors and average gifts per donor).
+- Adds 12-month donor retention metrics (retained, reactivated, churned, and retained value shift).
 - Adds recency buckets to show donor mix by last gift.
 - Adds a 12-month monthly trend for gifts and totals.
 - Groups donors into major/mid/small tiers with configurable thresholds.

@@ -702,6 +702,29 @@ one_time_donors = stats[:donors].values.select { |donor| donor[:total_gifts] == 
 repeat_donors = stats[:donors].values.select { |donor| donor[:total_gifts] > 1 }
 avg_gifts_per_donor = stats[:total_gifts].to_f / unique_donors
 
+recent_year_start = as_of - 365
+prior_year_start = recent_year_start - 365
+prior_year_end = recent_year_start - 1
+
+retention_totals = Hash.new { |hash, key| hash[key] = { recent: 0.0, prior: 0.0 } }
+stats[:gifts].each do |gift|
+  gift_date = gift[:gift_date]
+  if gift_date >= recent_year_start && gift_date <= as_of
+    retention_totals[gift[:donor_key]][:recent] += gift[:gift_amount]
+  elsif gift_date >= prior_year_start && gift_date <= prior_year_end
+    retention_totals[gift[:donor_key]][:prior] += gift[:gift_amount]
+  end
+end
+
+prior_donors = retention_totals.select { |_, totals| totals[:prior].positive? }
+recent_donors = retention_totals.select { |_, totals| totals[:recent].positive? }
+retained_donors = retention_totals.select { |_, totals| totals[:prior].positive? && totals[:recent].positive? }
+reactivated_12m = retention_totals.select { |_, totals| totals[:prior].zero? && totals[:recent].positive? }
+churned_12m = retention_totals.select { |_, totals| totals[:prior].positive? && totals[:recent].zero? }
+retention_rate = prior_donors.empty? ? 0.0 : retained_donors.length.to_f / prior_donors.length
+retained_prior_total = retained_donors.values.sum { |totals| totals[:prior] }
+retained_recent_total = retained_donors.values.sum { |totals| totals[:recent] }
+
 recency_buckets = [
   { label: '0-30 days', min: 0, max: 30 },
   { label: '31-90 days', min: 31, max: 90 },
@@ -838,6 +861,15 @@ puts "Engagement"
 puts "- One-time donors: #{one_time_donors.length} (#{format_percent(one_time_donors.length.to_f / unique_donors)})"
 puts "- Repeat donors: #{repeat_donors.length} (#{format_percent(repeat_donors.length.to_f / unique_donors)})"
 puts "- Avg gifts per donor: #{avg_gifts_per_donor.round(2)}"
+
+puts
+puts "Retention (last 12 months)"
+puts "- Prior 12m donors: #{prior_donors.length}"
+puts "- Recent 12m donors: #{recent_donors.length}"
+puts "- Retained donors: #{retained_donors.length} (#{format_percent(retention_rate)})"
+puts "- Reactivated donors: #{reactivated_12m.length}"
+puts "- Churned donors: #{churned_12m.length}"
+puts "- Retained donor value: #{format_money(retained_prior_total)} -> #{format_money(retained_recent_total)}"
 
 puts
 puts "Recency Buckets (by last gift)"
@@ -979,6 +1011,21 @@ report = {
     one_time_donors: one_time_donors.length,
     repeat_donors: repeat_donors.length,
     average_gifts_per_donor: avg_gifts_per_donor
+  },
+  retention: {
+    window_days: 365,
+    prior_start: prior_year_start.to_s,
+    prior_end: prior_year_end.to_s,
+    recent_start: recent_year_start.to_s,
+    recent_end: as_of.to_s,
+    prior_donors: prior_donors.length,
+    recent_donors: recent_donors.length,
+    retained_donors: retained_donors.length,
+    retention_rate: retention_rate,
+    reactivated_donors: reactivated_12m.length,
+    churned_donors: churned_12m.length,
+    retained_prior_total: retained_prior_total,
+    retained_recent_total: retained_recent_total
   },
   recency_buckets: recency_buckets.map do |bucket|
     donor_share = unique_donors.positive? ? bucket[:count].to_f / unique_donors : 0.0

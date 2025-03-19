@@ -50,3 +50,8 @@
 - Extended Postgres sync to store stewardship queue and recency bucket detail tables.
 - Added engagement metrics columns to brief_runs and backfilled with safe ALTERs.
 - Updated README with database table list and reseeded production data.
+
+## Iteration 97
+- Added 12-month donor retention metrics (retained, reactivated, churned) with retained value shifts in CLI + JSON.
+- Documented retention insights in the README feature list.
+- Added Minitest coverage to validate retention windows and JSON output.
