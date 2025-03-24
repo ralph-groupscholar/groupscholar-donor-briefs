@@ -16,6 +16,7 @@ Group Scholar Donor Briefs is a Ruby CLI that turns a donation export into an ex
 - Adds 12-month donor retention metrics (retained, reactivated, churned, and retained value shift).
 - Adds recency buckets to show donor mix by last gift.
 - Adds a 12-month monthly trend for gifts and totals.
+- Adds gift size mix buckets for gift distribution by amount.
 - Groups donors into major/mid/small tiers with configurable thresholds.
 - Builds a stewardship queue prioritizing open pledges and lapsed value.
 - Adds donor concentration metrics (top 5/10 share and largest donor share).
@@ -77,6 +78,7 @@ Database tables created:
 - `stewardship_queue`
 - `recency_buckets`
 - `monthly_trend`
+- `gift_size_buckets`
 
 ## CSV Headers
 

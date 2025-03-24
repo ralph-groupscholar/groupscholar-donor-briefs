@@ -188,9 +188,22 @@ def ensure_db_schema(conn, schema)
       gifts integer not null
     );
   SQL
+  conn.exec(<<~SQL)
+    CREATE TABLE IF NOT EXISTS #{schema_ident}.gift_size_buckets (
+      id bigserial primary key,
+      run_id bigint references #{schema_ident}.brief_runs(id) on delete cascade,
+      label text not null,
+      min_amount numeric not null,
+      max_amount numeric,
+      gifts integer not null,
+      total_amount numeric not null,
+      gift_share numeric not null,
+      total_share numeric not null
+    );
+  SQL
 end
 
-def persist_report(report, options, stats, top_donors, concentration, momentum, acknowledgements, pledges, monthly_trend)
+def persist_report(report, options, stats, top_donors, concentration, momentum, acknowledgements, pledges, monthly_trend, gift_size_buckets)
   load_pg!
   conn = PG.connect(db_connection_params)
   ensure_db_schema(conn, options.db_schema)
@@ -337,6 +350,26 @@ def persist_report(report, options, stats, top_donors, concentration, momentum, 
         Date.parse("#{entry[:month]}-01"),
         entry[:total],
         entry[:gifts]
+      ]
+    )
+  end
+
+  gift_size_buckets.each do |bucket|
+    conn.exec_params(
+      <<~SQL,
+        INSERT INTO #{schema_ident}.gift_size_buckets (
+          run_id, label, min_amount, max_amount, gifts, total_amount, gift_share, total_share
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+      SQL
+      [
+        run_id,
+        bucket[:label],
+        bucket[:min_amount],
+        bucket[:max_amount],
+        bucket[:gifts],
+        bucket[:total_amount],
+        bucket[:gift_share],
+        bucket[:total_share]
       ]
     )
   end
@@ -766,6 +799,30 @@ monthly_trend = last_12_months.map do |month|
   }
 end
 
+gift_size_buckets = [
+  { label: 'Under $100', min: 0.0, max: 99.99 },
+  { label: '$100-$499', min: 100.0, max: 499.99 },
+  { label: '$500-$999', min: 500.0, max: 999.99 },
+  { label: '$1,000-$4,999', min: 1000.0, max: 4999.99 },
+  { label: '$5,000-$9,999', min: 5000.0, max: 9999.99 },
+  { label: '$10,000+', min: 10_000.0, max: nil }
+].map { |bucket| bucket.merge(gifts: 0, total: 0.0) }
+
+stats[:gifts].each do |gift|
+  amount = gift[:gift_amount]
+  bucket = gift_size_buckets.find do |entry|
+    if entry[:max]
+      amount >= entry[:min] && amount <= entry[:max]
+    else
+      amount >= entry[:min]
+    end
+  end
+  next unless bucket
+
+  bucket[:gifts] += 1
+  bucket[:total] += amount
+end
+
 puts "Group Scholar Donor Brief"
 puts "As of: #{as_of}"
 puts "Input: #{options.input}"
@@ -883,6 +940,14 @@ puts
 puts "Monthly Trend (last 12 months)"
 monthly_trend.each do |entry|
   puts "- #{entry[:month]}: #{format_money(entry[:total])} (#{entry[:gifts]} gifts)"
+end
+
+puts
+puts "Gift Size Mix"
+gift_size_buckets.each do |bucket|
+  gift_share = stats[:total_gifts].positive? ? bucket[:gifts].to_f / stats[:total_gifts] : 0.0
+  total_share = total_raised.positive? ? bucket[:total] / total_raised : 0.0
+  puts "- #{bucket[:label]}: #{bucket[:gifts]} gifts, #{format_money(bucket[:total])} (#{format_percent(gift_share)} gifts, #{format_percent(total_share)} total)"
 end
 
 puts
@@ -1041,6 +1106,19 @@ report = {
     }
   end,
   monthly_trend: monthly_trend,
+  gift_size_buckets: gift_size_buckets.map do |bucket|
+    gift_share = stats[:total_gifts].positive? ? bucket[:gifts].to_f / stats[:total_gifts] : 0.0
+    total_share = total_raised.positive? ? bucket[:total] / total_raised : 0.0
+    {
+      label: bucket[:label],
+      min_amount: bucket[:min],
+      max_amount: bucket[:max],
+      gifts: bucket[:gifts],
+      total_amount: bucket[:total],
+      gift_share: gift_share,
+      total_share: total_share
+    }
+  end,
   tiers: {
     major_threshold: options.major_threshold,
     mid_threshold: options.mid_threshold,
@@ -1077,7 +1155,8 @@ if options.db_sync
     report[:momentum],
     report[:acknowledgements],
     report[:pledges],
-    report[:monthly_trend]
+    report[:monthly_trend],
+    report[:gift_size_buckets]
   )
   puts
   puts "Report stored in Postgres schema #{options.db_schema}."

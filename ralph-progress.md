@@ -55,3 +55,8 @@
 - Added 12-month donor retention metrics (retained, reactivated, churned) with retained value shifts in CLI + JSON.
 - Documented retention insights in the README feature list.
 - Added Minitest coverage to validate retention windows and JSON output.
+
+## Iteration 106
+- Added gift size mix buckets with CLI output and JSON reporting to highlight distribution of gifts by amount.
+- Persisted gift size buckets to Postgres with a new table in the donor briefs schema.
+- Added Minitest coverage to validate gift size bucket rollups and updated README documentation.
